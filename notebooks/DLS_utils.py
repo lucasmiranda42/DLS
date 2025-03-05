@@ -87,9 +87,7 @@ def weight_domain(data, columns_per_domain):
         {"mean", "std"}
     )
     # Check whether DLS animals have a higher or lower score than the control animals. If lower, multiply by -1
-    z_dls = domain_data.loc[domain_data.Condition == "DLS", "Weight AUC"].agg(
-        {"mean"}
-    )
+    z_dls = domain_data.loc[domain_data.Condition == "DLS", "Weight AUC"].agg({"mean"})
     # Compute the Z-score per variable
     z_scores = signed_z_score(domain_data["Weight AUC"], z_bases, z_dls)
     # Aggregate and return
@@ -187,7 +185,9 @@ def biological_domain(data, columns_per_domain):
     # Aggregate and return
     domain_data["Biological markers"] = z_scores.mean(axis=1)
 
-    return domain_data[["Sample name", "Condition", "Biological markers"]].drop_duplicates()
+    return domain_data[
+        ["Sample name", "Condition", "Biological markers"]
+    ].drop_duplicates()
 
 
 def social_domain(data, columns_per_domain):
