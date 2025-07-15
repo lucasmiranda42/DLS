@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import io
 import os
+import base64
 
 from sys import argv
 
@@ -16,12 +17,80 @@ st.set_page_config(
     page_title="DZMap - DLS Score Analysis", page_icon="📊", layout="wide"
 )
 
-# Set up color palette
+# Set up color palette - ensure consistent colors across all plots
 palette = sns.color_palette("Set2", as_cmap=True)
 color_discrete_sequence = sns.color_palette("Set2").as_hex()
 
+# Define consistent color mapping
+COLOR_MAP = {
+    "Control": color_discrete_sequence[0],  # First color in Set2 for Controls (green)
+    "DLS": color_discrete_sequence[1],      # Second color in Set2 for DLS (orange)
+}
+
 # Set default file path
 DEFAULT_FILE = "../DLS_data/Results/DLS_domain_scores.csv"
+
+
+def create_download_button(fig, filename, button_text="Download as SVG", key=None):
+    """Create a download button for Plotly figures in SVG format"""
+    try:
+        # Convert figure to SVG
+        svg_bytes = fig.to_image(format="svg")
+        
+        # Create download button
+        st.download_button(
+            label=button_text,
+            data=svg_bytes,
+            file_name=f"{filename}.svg",
+            mime="image/svg+xml",
+            key=key
+        )
+    except Exception as e:
+        st.error(f"Error creating download button: {e}")
+
+
+def create_download_buttons_row(fig, filename_base, key_base):
+    """Create a row of download buttons for different formats"""
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        try:
+            svg_bytes = fig.to_image(format="svg")
+            st.download_button(
+                label="📊 Download SVG",
+                data=svg_bytes,
+                file_name=f"{filename_base}.svg",
+                mime="image/svg+xml",
+                key=f"{key_base}_svg"
+            )
+        except Exception as e:
+            st.error(f"SVG export error: {e}")
+    
+    with col2:
+        try:
+            pdf_bytes = fig.to_image(format="pdf")
+            st.download_button(
+                label="📄 Download PDF",
+                data=pdf_bytes,
+                file_name=f"{filename_base}.pdf",
+                mime="application/pdf",
+                key=f"{key_base}_pdf"
+            )
+        except Exception as e:
+            st.error(f"PDF export error: {e}")
+    
+    with col3:
+        try:
+            png_bytes = fig.to_image(format="png", width=1200, height=800, scale=2)
+            st.download_button(
+                label="🖼️ Download PNG",
+                data=png_bytes,
+                file_name=f"{filename_base}.png",
+                mime="image/png",
+                key=f"{key_base}_png"
+            )
+        except Exception as e:
+            st.error(f"PNG export error: {e}")
 
 
 def load_data(file_path=None):
@@ -73,7 +142,26 @@ def get_original_dataframe(melted_data):
     return None
 
 
+def calculate_effect_sizes(data):
+    """Calculate effect sizes (difference in means) for each domain to sort violin plot"""
+    effect_sizes = []
+    domains = data['domain'].unique()
+    
+    for domain in domains:
+        domain_data = data[data['domain'] == domain]
+        control_mean = domain_data[domain_data['Condition'] == 'Control']['Z-score value'].mean()
+        dls_mean = domain_data[domain_data['Condition'] == 'DLS']['Z-score value'].mean()
+        effect_size = abs(dls_mean - control_mean)  # Absolute difference
+        effect_sizes.append({'domain': domain, 'effect_size': effect_size})
+    
+    effect_df = pd.DataFrame(effect_sizes)
+    return effect_df.sort_values('effect_size', ascending=False)['domain'].tolist()
+
+
 def create_violin_plot(data):
+    # Sort domains by effect size
+    sorted_domains = calculate_effect_sizes(data)
+    
     violin_fig = px.strip(
         data,
         y="Z-score value",
@@ -81,18 +169,13 @@ def create_violin_plot(data):
         color="Condition",
         hover_data={"Sample name": True},
         custom_data=["Sample name", "Condition"],  # Needed for click detection
-        category_orders={
-            "domain": list(data.sort_values(by=["Z-score value"]).domain.unique())
-        },
-        color_discrete_map={
-            "Control": color_discrete_sequence[0],
-            "DLS": color_discrete_sequence[1],
-        },
+        category_orders={"domain": sorted_domains},
+        color_discrete_map=COLOR_MAP,
     )
     violin_fig.update_traces(jitter=0.75, selector=dict(mode="markers"))
 
     violin_fig.update_layout(
-        title={"text": "Violin plot of DLS score values", "x": 0.15},
+        title={"text": "Violin plot of DLS score values (sorted by effect size)", "x": 0.15},
         xaxis_title="Domain",
         yaxis_title="Z-score value",
         font=dict(family="Arial, sans-serif", size=14, color="black"),
@@ -127,7 +210,13 @@ def create_spider_plot(data, selected_sample):
         )
         return default_spider_fig
 
-    # Process data for radar plot
+    # Handle average plots for Control and DLS
+    if selected_sample == "Control average":
+        return create_average_spider_plot(data, "Control")
+    elif selected_sample == "DLS average":
+        return create_average_spider_plot(data, "DLS")
+
+    # Process data for individual sample radar plot
     data_radar = data.copy()
     data_radar["domain"] = pd.Categorical(
         data_radar["domain"],
@@ -167,10 +256,61 @@ def create_spider_plot(data, selected_sample):
         height=600,
         margin=dict(t=100, b=100, l=100, r=100),
     )
-    line_color = {
-        "Control": color_discrete_sequence[0],
-        "DLS": color_discrete_sequence[1],
-    }[condition]
+    line_color = COLOR_MAP[condition]
+    spider_fig.update_traces(line=dict(color=line_color), fill="toself", line_width=5)
+    spider_fig.update_layout(
+        polar=dict(radialaxis=dict(visible=True, range=[0.0, 1.0])),
+        showlegend=False,
+    )
+
+    return spider_fig
+
+
+def create_average_spider_plot(data, condition):
+    """Create an average spider plot for a given condition (Control or DLS)"""
+    # Process data for radar plot
+    data_radar = data.copy()
+    data_radar["domain"] = pd.Categorical(
+        data_radar["domain"],
+        categories=["Socio-temporal functions", "Psychomotor changes", "Fatigue", "DLS score", "Lack of concentration", "Biological markers", "Apetite / weight", "Anxiety", "Anhedonia"],
+    )
+    data_radar = data_radar.sort_values("domain", ascending=True)
+    data_radar["Z-score value"] = data_radar.groupby("domain", group_keys=False)[
+        "Z-score value"
+    ].apply(lambda x: (x - x.min()) / (x.max() - x.min()))
+    
+    # Filter by condition and exclude Total score
+    filtered_df = data_radar[data_radar["Condition"] == condition]
+    filtered_df = filtered_df.loc[filtered_df.domain != "Total score"]
+    
+    # Calculate mean values for each domain
+    mean_values = filtered_df.groupby("domain")["Z-score value"].mean()
+    categories = mean_values.index.tolist()
+
+    spider_fig = px.line_polar(
+        mean_values,
+        r=mean_values.values,
+        theta=categories,
+        line_close=True,
+    )
+
+    spider_fig.update_layout(
+        title={
+            "text": f"Average radar plot for {condition} condition",
+            "y": 0.98,
+            "x": 0.25,
+            "xanchor": "center",
+            "yanchor": "top",
+        },
+        font=dict(family="Arial, sans-serif", size=14, color="black"),
+        plot_bgcolor="white",
+        showlegend=True,
+        height=600,
+        margin=dict(t=100, b=100, l=100, r=100),
+    )
+    
+    line_color = COLOR_MAP[condition]
+    
     spider_fig.update_traces(line=dict(color=line_color), fill="toself", line_width=5)
     spider_fig.update_layout(
         polar=dict(radialaxis=dict(visible=True, range=[0.0, 1.0])),
@@ -187,39 +327,38 @@ def intro_page():
         """
     ## Introduction
     
-    This dashboard provides an interactive visualization of DLS (Depressive-Like Syndrome) scores across various domains.
+    This dashboard provides a set of interactive visualizations for DLS (Depressive-Like Syndrome) scores across various domains, and allows researchers to submit their own data for analysis.
     
     ### Key Features:
-    - **Violin Plot**: Displays the distribution of Z-score values across domains, colored by condition (Control vs. DLS).
-    - **Radar Plot**: Shows the normalized profile of a selected sample across all domains.
-    - **Sample Selection**: Select samples either from the dropdown menu or by clicking directly on the violin plot.
-    - **Data Table**: Browse the raw data in tabular form.
-    - **Clustered Heatmap**: Visualize patterns across samples and domains with hierarchical clustering.
+    - **Data Table**: Browse the raw data directly in tabular form, and check that everything looks as expected.
+    - **Data Exploration**: Explore the dataset with summary statistics and simple visualizations per domain.
+    - **Score Radars**: Displays an interactive visualization with the distribution of scores per domain. Selecting a sample will show its profile across all domains as a radar plot.
+    - **Clustered Heatmap**: Visualize patterns across samples and domains with optional hierarchical clustering.
+    - **Vector Export**: All figures can be exported in high-quality vector formats (SVG, PDF) and raster formats (PNG).
     
     ### How to Use:
-    1. The app loads a default dataset (DLS_scores.csv) if available
-    2. Alternatively, upload your data using the file uploader in the sidebar
-    3. Navigate between tabs using the sidebar menu
-    4. Select samples to view their detailed profiles by:
+    1. The app loads the dataset presented in the accompanying paper by default.
+    2. Alternatively, upload your data using the file uploader in the sidebar, as a CSV with domain scores as columns and animal IDs as rows.
+    3. Navigate between tabs using the sidebar menu, alternating between several interactive visualizations.
+    4. Under the "Score Radars" tab, select samples to view their detailed profiles by:
        - Using the dropdown menu
        - Clicking directly on points in the violin plot
+    This will update the radar plot on the right.
+    5. Use the download buttons below each figure to export in your preferred format.
+
+    All generated figures can be downloaded for further analysis or publication.
     
     ### About the Data:
-    The data represents Z-score values for various domains across different samples, categorized by condition (Control or DLS).
+    The data represents Z-score values for various domains across different samples, categorized by condition (Control or DLS). Refer to the manuscript for more details on the methodology and analysis.
     """
     )
 
     st.markdown("---")
-    st.markdown("### Additional Information")
     st.markdown(
         """
-    You can add more information about your project, methodology, or any other relevant context here.
-    
-    This section can be customized to include:
-    - Research objectives
-    - Experimental design
-    - Data collection methods
-    - Analysis protocols
+
+    This tool accompanies the paper **Reinventing the wheel: Domain-focused biobehavioral assessment confirms a depression-like syndrome in C57BL/6 mice caused by chronic social defeat**.\n
+
     """
     )
 
@@ -287,7 +426,9 @@ def visualization_page(data):
     if 'clicked_sample' not in st.session_state:
         st.session_state.clicked_sample = None
     
+    # Get sample options and add average options
     sample_options = sorted(data["Sample name"].unique())
+    dropdown_options = ["Control average", "DLS average"] + sample_options
     
     # Define callback for dropdown selection
     def on_dropdown_change():
@@ -297,7 +438,7 @@ def visualization_page(data):
     # Dropdown for manual selection
     selected_sample = st.selectbox(
         "Click a sample on the plot on the left, or select manually from the drop-down menu",
-        options=[None] + sample_options,
+        options=[None] + dropdown_options,
         format_func=lambda x: "Select a sample" if x is None else x,
         key="dropdown_selection",
         on_change=on_dropdown_change
@@ -307,9 +448,14 @@ def visualization_page(data):
     
     with col1:
         # Create violin plot
-        base_violin_fig = create_violin_plot(data)
+        violin_fig = create_violin_plot(data)
         # Display violin plot with sample highlighted
-        event_dict = st.plotly_chart(base_violin_fig, theme="streamlit", use_container_width=True, on_select="rerun", selection_mode="points")
+        event_dict = st.plotly_chart(violin_fig, theme="streamlit", use_container_width=True, on_select="rerun", selection_mode="points")
+        
+        # Add download buttons for violin plot
+        st.markdown("**Export Violin Plot:**")
+        create_download_buttons_row(violin_fig, "violin_plot", "violin")
+        
         # Extract sample from click event
         try:
             clicked_sample = event_dict['selection']['points'][0]['customdata'][0]
@@ -330,6 +476,11 @@ def visualization_page(data):
     with col2:
         spider_fig = create_spider_plot(data, selected_sample=final_sample)
         st.plotly_chart(spider_fig, use_container_width=True)
+        
+        # Add download buttons for spider plot (only if a sample is selected)
+        if final_sample:
+            st.markdown("**Export Radar Plot:**")
+            create_download_buttons_row(spider_fig, f"radar_plot_{final_sample}", f"radar_{final_sample}")
 
     
 def data_analysis_page(data):
@@ -348,10 +499,14 @@ def data_analysis_page(data):
     condition_fig = px.pie(
         values=condition_counts.values,
         names=condition_counts.index,
-        color_discrete_sequence=color_discrete_sequence,
+        color_discrete_map=COLOR_MAP,  # Use the consistent color mapping
         title="Distribution of Samples by Condition",
     )
     st.plotly_chart(condition_fig)
+    
+    # Add download buttons for pie chart
+    st.markdown("**Export Pie Chart:**")
+    create_download_buttons_row(condition_fig, "sample_distribution_pie", "pie")
 
     # Show domain summary statistics
     st.subheader("Domain Statistics")
@@ -362,24 +517,80 @@ def data_analysis_page(data):
     )
     st.dataframe(domain_stats)
 
-    # Show a heatmap of domain correlations
+    # Show a heatmap of domain correlations (excluding DLS score)
     st.subheader("Domain Correlation Heatmap")
     # Pivot data to get domains as columns
     pivot_data = data.pivot_table(
         index="Sample name", columns="domain", values="Z-score value", aggfunc="mean"
     )
+    
+    # Remove DLS score column from correlation analysis
+    if "DLS score" in pivot_data.columns:
+        pivot_data = pivot_data.drop("DLS score", axis=1)
 
     # Calculate correlation matrix
     corr_matrix = pivot_data.corr()
 
-    # Create heatmap
-    heatmap_fig = px.imshow(
+    # Create clustered correlation heatmap using seaborn
+    clustered_corr = sns.clustermap(
         corr_matrix,
-        color_continuous_scale=px.colors.sequential.Viridis,
-        title="Correlation Between Domains",
+        annot=True,
+        fmt='.2f',  # Format annotations to 2 decimal places
+        cmap='viridis',
+        center=0,
+        linewidths=0.5,
+        cbar_kws={"shrink": 0.5},
+        figsize=(12, 10),
     )
-    heatmap_fig.update_layout(height=600)
-    st.plotly_chart(heatmap_fig)
+    
+    # Save to buffer for display
+    corr_buffer = io.BytesIO()
+    clustered_corr.savefig(corr_buffer, format='png', bbox_inches='tight', dpi=300)
+    corr_buffer.seek(0)
+    
+    # Display the clustered correlation heatmap
+    st.image(corr_buffer, use_container_width=False)
+    
+    # Create download buttons for clustered correlation heatmap
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        corr_buffer.seek(0)
+        st.download_button(
+            label="🖼️ Download PNG",
+            data=corr_buffer,
+            file_name="clustered_correlation_heatmap.png",
+            mime="image/png",
+            key="corr_heatmap_png"
+        )
+    
+    with col2:
+        corr_svg_buffer = io.BytesIO()
+        clustered_corr.savefig(corr_svg_buffer, format='svg', bbox_inches='tight')
+        corr_svg_buffer.seek(0)
+        st.download_button(
+            label="📊 Download SVG",
+            data=corr_svg_buffer,
+            file_name="clustered_correlation_heatmap.svg",
+            mime="image/svg+xml",
+            key="corr_heatmap_svg"
+        )
+    
+    with col3:
+        corr_pdf_buffer = io.BytesIO()
+        clustered_corr.savefig(corr_pdf_buffer, format='pdf', bbox_inches='tight')
+        corr_pdf_buffer.seek(0)
+        st.download_button(
+            label="📄 Download PDF",
+            data=corr_pdf_buffer,
+            file_name="clustered_correlation_heatmap.pdf",
+            mime="application/pdf",
+            key="corr_heatmap_pdf"
+        )
+    
+    plt.close('all')  # Clean up matplotlib figures
+    
+    # Download buttons are now integrated above
 
 
 def clustered_heatmap_page(data):
@@ -408,24 +619,22 @@ def clustered_heatmap_page(data):
         st.sidebar.subheader("Heatmap Options")
         cluster_rows = st.sidebar.checkbox("Cluster Rows (Domains)", value=True)
         cluster_cols = st.sidebar.checkbox("Cluster Columns (Samples)", value=True)
-        z_score_normalize = st.sidebar.checkbox("Z-score Normalization", value=True)
+        z_score_normalize = st.sidebar.checkbox("Z-score Normalization", value=False)
         cmap_option = st.sidebar.selectbox(
             "Color Map",
-            options=["coolwarm", "viridis", "plasma", "inferno", "magma", "cividis"],
-            index=0,
+            options=["viridis", "coolwarm", "plasma", "inferno", "magma", "cividis"],
+            index=0,  # viridis is now the default
         )
 
         # Create the heatmap using matplotlib
         fig, ax = plt.subplots(figsize=(12, 8))
 
-        # Set up sample colors for the color bar
-        sample_colors = domain_scores["Condition"].map(
-            {"Control": "blue", "DLS": "red"}
-        )
+        # Set up sample colors for the color bar using Set2 colors
+        sample_colors = domain_scores["Condition"].map(COLOR_MAP)
 
         # Prepare data matrix for heatmap
         data_matrix = domain_scores.set_index(["Sample name", "Condition"])
-        domains = [col for col in data_matrix.columns if col != "Total score"]
+        domains = [col for col in data_matrix.columns if col != "DLS score"]
         data_matrix = data_matrix[domains].T
 
         # Apply Z-score normalization if selected
@@ -437,9 +646,10 @@ def clustered_heatmap_page(data):
 
         try:
             # Create the clustermap
+            sns.set_context("paper")
             heatmap = sns.clustermap(
                 data_matrix,
-                figsize=(12, 8),
+                figsize=(24, 10),
                 cmap=cmap_option,
                 z_score=0 if z_score_normalize else None,
                 row_cluster=cluster_rows,
@@ -458,15 +668,48 @@ def clustered_heatmap_page(data):
             buffer.seek(0)
 
             # Display the figure using st.image
-            st.image(buffer, use_container_width=True)
+            st.image(buffer, use_container_width=True, output_format="PNG")
 
-            # Add download button for the heatmap
-            btn = st.download_button(
-                label="Download Heatmap",
-                data=buffer,
-                file_name="clustered_heatmap.png",
-                mime="image/png",
-            )
+            # Add download buttons for the heatmap
+            st.markdown("**Export Clustered Heatmap:**")
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                # PNG download
+                buffer.seek(0)
+                st.download_button(
+                    label="🖼️ Download PNG",
+                    data=buffer,
+                    file_name="clustered_heatmap.png",
+                    mime="image/png",
+                    key="heatmap_png"
+                )
+            
+            with col2:
+                # SVG download
+                svg_buffer = io.BytesIO()
+                plt.savefig(svg_buffer, format="svg", bbox_inches="tight")
+                svg_buffer.seek(0)
+                st.download_button(
+                    label="📊 Download SVG",
+                    data=svg_buffer,
+                    file_name="clustered_heatmap.svg",
+                    mime="image/svg+xml",
+                    key="heatmap_svg"
+                )
+            
+            with col3:
+                # PDF download
+                pdf_buffer = io.BytesIO()
+                plt.savefig(pdf_buffer, format="pdf", bbox_inches="tight")
+                pdf_buffer.seek(0)
+                st.download_button(
+                    label="📄 Download PDF",
+                    data=pdf_buffer,
+                    file_name="clustered_heatmap.pdf",
+                    mime="application/pdf",
+                    key="heatmap_pdf"
+                )
 
         except Exception as e:
             st.error(f"Error generating heatmap: {e}")
