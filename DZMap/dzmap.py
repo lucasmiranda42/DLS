@@ -5,6 +5,7 @@ import plotly.graph_objs as go
 import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
+import copy
 import io
 import os
 import base64
@@ -24,7 +25,7 @@ color_discrete_sequence = sns.color_palette("Set2").as_hex()
 # Define consistent color mapping
 COLOR_MAP = {
     "Control": color_discrete_sequence[0],  # First color in Set2 for Controls (green)
-    "DLS": color_discrete_sequence[1],      # Second color in Set2 for DLS (orange)
+    "CSDS": color_discrete_sequence[1],      # Second color in Set2 for CSDS (orange)
 }
 
 # Set default file path
@@ -93,6 +94,64 @@ def create_download_buttons_row(fig, filename_base, key_base):
             st.error(f"PNG export error: {e}")
 
 
+def create_download_buttons_row_with_csv(fig, filename_base, key_base, data_df, data_filename=None):
+    """Create a row of download buttons for different formats including CSV data"""
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        try:
+            svg_bytes = fig.to_image(format="svg")
+            st.download_button(
+                label="📊 Download SVG",
+                data=svg_bytes,
+                file_name=f"{filename_base}.svg",
+                mime="image/svg+xml",
+                key=f"{key_base}_svg"
+            )
+        except Exception as e:
+            st.error(f"SVG export error: {e}")
+    
+    with col2:
+        try:
+            pdf_bytes = fig.to_image(format="pdf")
+            st.download_button(
+                label="📄 Download PDF",
+                data=pdf_bytes,
+                file_name=f"{filename_base}.pdf",
+                mime="application/pdf",
+                key=f"{key_base}_pdf"
+            )
+        except Exception as e:
+            st.error(f"PDF export error: {e}")
+    
+    with col3:
+        try:
+            png_bytes = fig.to_image(format="png", width=1200, height=800, scale=2)
+            st.download_button(
+                label="🖼️ Download PNG",
+                data=png_bytes,
+                file_name=f"{filename_base}.png",
+                mime="image/png",
+                key=f"{key_base}_png"
+            )
+        except Exception as e:
+            st.error(f"PNG export error: {e}")
+    
+    with col4:
+        try:
+            csv_data = data_df.to_csv(index=False)
+            csv_filename = data_filename if data_filename else f"{filename_base}_data.csv"
+            st.download_button(
+                label="📋 Download CSV",
+                data=csv_data,
+                file_name=csv_filename,
+                mime="text/csv",
+                key=f"{key_base}_csv"
+            )
+        except Exception as e:
+            st.error(f"CSV export error: {e}")
+
+
 def load_data(file_path=None):
     """Load data from a file or use uploaded file"""
     try:
@@ -128,6 +187,9 @@ def process_data(df):
         var_name="domain",
         value_name="Z-score value",
     ).sort_values(by=["Condition", "domain", "Z-score value"])
+    
+    # Replace DLS with CSDS in condition names for display
+    scores_per_domain["Condition"] = scores_per_domain["Condition"].replace("DLS", "CSDS")
 
     return scores_per_domain
 
@@ -150,15 +212,18 @@ def calculate_effect_sizes(data):
     for domain in domains:
         domain_data = data[data['domain'] == domain]
         control_mean = domain_data[domain_data['Condition'] == 'Control']['Z-score value'].mean()
-        dls_mean = domain_data[domain_data['Condition'] == 'DLS']['Z-score value'].mean()
-        effect_size = abs(dls_mean - control_mean)  # Absolute difference
+        csds_mean = domain_data[domain_data['Condition'] == 'CSDS']['Z-score value'].mean()
+        effect_size = abs(csds_mean - control_mean)  # Absolute difference
         effect_sizes.append({'domain': domain, 'effect_size': effect_size})
     
     effect_df = pd.DataFrame(effect_sizes)
     return effect_df.sort_values('effect_size', ascending=False)['domain'].tolist()
 
 
-def create_violin_plot(data):
+def create_violin_plot(data, color_map=None):
+    if color_map is None:
+        color_map = COLOR_MAP
+        
     # Sort domains by effect size
     sorted_domains = calculate_effect_sizes(data)
     
@@ -170,7 +235,7 @@ def create_violin_plot(data):
         hover_data={"Sample name": True},
         custom_data=["Sample name", "Condition"],  # Needed for click detection
         category_orders={"domain": sorted_domains},
-        color_discrete_map=COLOR_MAP,
+        color_discrete_map=color_map,
     )
     violin_fig.update_traces(jitter=0.75, selector=dict(mode="markers"))
 
@@ -188,7 +253,14 @@ def create_violin_plot(data):
     return violin_fig
 
 
-def create_spider_plot(data, selected_sample):
+def create_spider_plot(data, selected_sample, color_map=None):
+    if color_map is None:
+        color_map = COLOR_MAP
+    
+    # Ensure selected_sample is a string or None
+    if selected_sample is not None and not isinstance(selected_sample, str):
+        selected_sample = str(selected_sample)
+        
     if not selected_sample:
         # Default spider plot when no sample is selected
         default_spider_fig = go.Figure()
@@ -210,11 +282,20 @@ def create_spider_plot(data, selected_sample):
         )
         return default_spider_fig
 
-    # Handle average plots for Control and DLS
-    if selected_sample == "Control average":
-        return create_average_spider_plot(data, "Control")
-    elif selected_sample == "DLS average":
-        return create_average_spider_plot(data, "DLS")
+    # Handle average plots for different conditions
+    if selected_sample.endswith(" average"):
+        condition_name = selected_sample.replace(" average", "")
+        available_conditions = data['Condition'].unique()
+        
+        # Check if the condition exists in the data
+        if condition_name in available_conditions:
+            return create_average_spider_plot(data, condition_name, color_map)
+        
+        # Fallback for original Control/CSDS naming
+        if condition_name == "Control" and "Control" in available_conditions:
+            return create_average_spider_plot(data, "Control", color_map)
+        elif condition_name == "CSDS" and "CSDS" in available_conditions:
+            return create_average_spider_plot(data, "CSDS", color_map)
 
     # Process data for individual sample radar plot
     data_radar = data.copy()
@@ -226,8 +307,30 @@ def create_spider_plot(data, selected_sample):
     data_radar["Z-score value"] = data_radar.groupby("domain", group_keys=False)[
         "Z-score value"
     ].apply(lambda x: (x - x.min()) / (x.max() - x.min()))
-    filtered_df = data_radar[data_radar["Sample name"] == selected_sample]
+
+    filtered_df = data_radar[data_radar["Sample name"] == int(selected_sample)]
     filtered_df = filtered_df.loc[filtered_df.domain != "Total score"]
+
+    if len(filtered_df) == 0:
+        # Sample not found, return default plot instead of error
+        default_spider_fig = go.Figure()
+        default_spider_fig.update_layout(
+            title={
+                "text": "Sample not available in current filter",
+                "y": 0.98,
+                "x": 0.40,
+                "xanchor": "center",
+                "yanchor": "top",
+            },
+            font=dict(family="Arial, sans-serif", size=14, color="black"),
+            plot_bgcolor="white",
+            paper_bgcolor="white",
+            xaxis=dict(visible=False),
+            yaxis=dict(visible=False),
+            height=600,
+            margin=dict(t=50, b=50, l=50, r=50),
+        )
+        return default_spider_fig
 
     condition = filtered_df["Condition"].iloc[0]
     categories = filtered_df["domain"].unique()
@@ -256,7 +359,7 @@ def create_spider_plot(data, selected_sample):
         height=600,
         margin=dict(t=100, b=100, l=100, r=100),
     )
-    line_color = COLOR_MAP[condition]
+    line_color = color_map.get(condition, color_discrete_sequence[0])
     spider_fig.update_traces(line=dict(color=line_color), fill="toself", line_width=5)
     spider_fig.update_layout(
         polar=dict(radialaxis=dict(visible=True, range=[0.0, 1.0])),
@@ -266,8 +369,11 @@ def create_spider_plot(data, selected_sample):
     return spider_fig
 
 
-def create_average_spider_plot(data, condition):
-    """Create an average spider plot for a given condition (Control or DLS)"""
+def create_average_spider_plot(data, condition, color_map=None):
+    """Create an average spider plot for a given condition (Control or CSDS)"""
+    if color_map is None:
+        color_map = COLOR_MAP
+        
     # Process data for radar plot
     data_radar = data.copy()
     data_radar["domain"] = pd.Categorical(
@@ -309,7 +415,7 @@ def create_average_spider_plot(data, condition):
         margin=dict(t=100, b=100, l=100, r=100),
     )
     
-    line_color = COLOR_MAP[condition]
+    line_color = color_map.get(condition, color_discrete_sequence[0])
     
     spider_fig.update_traces(line=dict(color=line_color), fill="toself", line_width=5)
     spider_fig.update_layout(
@@ -415,6 +521,70 @@ def data_table_page(data):
         st.table(condition_counts)
 
 
+def apply_custom_filters(data, filters_list):
+    """Apply multiple custom filters to create binary classification based on domain thresholds"""
+    if not filters_list:
+        return data
+    
+    # Create a copy of the data
+    filtered_data = copy.deepcopy(data)
+    
+    # For each sample, determine its new condition based on all filters
+    sample_conditions = {}
+    
+    for sample in filtered_data['Sample name'].unique():
+        sample_classifications = []
+        
+        for filter_info in filters_list:
+            filter_domain = filter_info['domain']
+            filter_threshold = filter_info['threshold']
+            
+            # Get the score for this sample in this domain
+            domain_data = data[(data['domain'] == filter_domain) & (data['Sample name'] == sample)]
+            if not domain_data.empty:
+                sample_score = domain_data['Z-score value'].iloc[0]
+                if sample_score >= filter_threshold:
+                    sample_classifications.append('H')
+                else:
+                    sample_classifications.append('L')
+            else:
+                sample_classifications.append('?')  # Missing data
+        
+        # Create condition label based on all classifications
+        if len(filters_list) == 1:
+            # Single filter: use High/Low
+            sample_conditions[sample] = 'High' if sample_classifications[0] == 'H' else 'Low'
+        else:
+            # Multiple filters: only show samples that fulfill all criteria or none
+            if all(c == 'H' for c in sample_classifications):
+                sample_conditions[sample] = 'High (all criteria)'
+            elif all(c == 'L' for c in sample_classifications):
+                sample_conditions[sample] = 'Low (all criteria)'
+            elif any(c == 'H' for c in sample_classifications):
+                sample_conditions[sample] = 'Mixed'
+            else:
+                # Skip mixed samples by not adding them to sample_conditions
+                # This effectively filters them out of the visualization
+                continue
+    
+    # Update the condition column based on the new classification
+    filtered_data['Condition'] = filtered_data['Sample name'].map(sample_conditions)
+    
+    # Remove samples that don't have a condition assignment (mixed samples in multi-filter case)
+    filtered_data = filtered_data.dropna(subset=['Condition'])
+    
+    return filtered_data
+
+
+def apply_custom_filter(data, filter_domain, filter_threshold):
+    """Apply single custom filter - wrapper for backwards compatibility"""
+    if filter_domain is None:
+        return data
+    
+    filters_list = [{'domain': filter_domain, 'threshold': filter_threshold}]
+    return apply_custom_filters(data, filters_list)
+
+
 def visualization_page(data):
     st.title("DLS Score Visualization")
     
@@ -425,10 +595,138 @@ def visualization_page(data):
         st.session_state.selected_sample = None
     if 'clicked_sample' not in st.session_state:
         st.session_state.clicked_sample = None
+    if 'custom_filters_active' not in st.session_state:
+        st.session_state.custom_filters_active = False
+    if 'filters_list' not in st.session_state:
+        st.session_state.filters_list = []
+    
+    # Custom Filter Section
+    st.subheader("Custom Binary Classification")
+    
+    col_filter1, col_filter2, col_filter3 = st.columns([2, 2, 1])
+    
+    with col_filter1:
+        if st.button("Add Custom Filter", key="add_filter_btn"):
+            st.session_state.custom_filters_active = True
+    
+    with col_filter2:
+        if st.button("Reset All Filters", key="reset_filter_btn"):
+            st.session_state.custom_filters_active = False
+            st.session_state.filters_list = []
+            st.session_state.selected_sample = None
+            st.session_state.clicked_sample = None
+    
+    # Show filter controls if custom filter is active
+    if st.session_state.custom_filters_active:
+        st.markdown("**Configure Custom Filters:**")
+        
+        # Display existing filters
+        if st.session_state.filters_list:
+            st.markdown("**Active Filters:**")
+            for i, filter_info in enumerate(st.session_state.filters_list):
+                col_info, col_remove = st.columns([4, 1])
+                with col_info:
+                    st.write(f"{i+1}. {filter_info['domain']} ≥ {filter_info['threshold']:.1f}")
+                with col_remove:
+                    if st.button("Remove", key=f"remove_filter_{i}"):
+                        st.session_state.filters_list.pop(i)
+                        st.rerun()
+        
+        # Add new filter section
+        st.markdown("**Add New Filter:**")
+        col_domain, col_threshold, col_add = st.columns([3, 3, 1])
+        
+        with col_domain:
+            # Get available domains (excluding 'Total score' and 'DLS score')
+            available_domains = [d for d in data['domain'].unique() 
+                               if d not in ['Total score']]
+            
+            new_filter_domain = st.selectbox(
+                "Select Domain",
+                options=[None] + available_domains,
+                key="new_filter_domain_select",
+                format_func=lambda x: "Choose domain..." if x is None else x
+            )
+        
+        with col_threshold:
+            if new_filter_domain:
+                # Get min and max values for the selected domain
+                domain_data = data[data['domain'] == new_filter_domain]
+                min_val = float(domain_data['Z-score value'].min())
+                max_val = float(domain_data['Z-score value'].max())
+                mean_val = float(domain_data['Z-score value'].mean())
+                
+                new_filter_threshold = st.slider(
+                    f"Threshold for {new_filter_domain}",
+                    min_value=min_val,
+                    max_value=max_val,
+                    value=mean_val,
+                    step=0.1,
+                    key="new_filter_threshold_slider"
+                )
+                
+                # Show classification info for this domain
+                high_count = len(domain_data[domain_data['Z-score value'] >= new_filter_threshold])
+                low_count = len(domain_data[domain_data['Z-score value'] < new_filter_threshold])
+                st.info(f"**High** (≥{new_filter_threshold:.1f}): {high_count} | **Low** (<{new_filter_threshold:.1f}): {low_count}")
+        
+        with col_add:
+            if new_filter_domain is not None:
+                st.write("")  # Add spacing
+                st.write("")  # Add spacing
+                if st.button("Add Filter", key="add_new_filter_btn"):
+                    # Check if this domain is already in the filters
+                    existing_domains = [f['domain'] for f in st.session_state.filters_list]
+                    if new_filter_domain not in existing_domains:
+                        st.session_state.filters_list.append({
+                            'domain': new_filter_domain,
+                            'threshold': new_filter_threshold
+                        })
+                        st.rerun()
+                    else:
+                        st.warning(f"Filter for {new_filter_domain} already exists!")
+        
+        # Show combined filter information
+        if st.session_state.filters_list:
+            st.markdown("**Combined Classification Preview:**")
+            # Apply filters to show classification counts
+            preview_data = apply_custom_filters(data, st.session_state.filters_list)
+            condition_counts = preview_data.groupby("Sample name")["Condition"].first().value_counts()
+            
+            # Display in columns
+            if len(condition_counts) > 0:
+                cols = st.columns(len(condition_counts))
+                for i, (condition, count) in enumerate(condition_counts.items()):
+                    with cols[i]:
+                        st.metric(condition, count)
+    
+    # Apply custom filters if active
+    if st.session_state.custom_filters_active and st.session_state.filters_list:
+        display_data = apply_custom_filters(data, st.session_state.filters_list)
+        
+        # Create dynamic color map based on unique conditions
+        unique_conditions = display_data['Condition'].unique()
+        current_color_map = {}
+        
+        # Assign colors from the palette
+        for i, condition in enumerate(unique_conditions):
+            current_color_map[condition] = color_discrete_sequence[i % len(color_discrete_sequence)]
+        
+        # Create filter info string
+        filter_descriptions = [f"{f['domain']} ≥ {f['threshold']:.1f}" for f in st.session_state.filters_list]
+        filter_info = f" (Filtered by: {'; '.join(filter_descriptions)})"
+    else:
+        display_data = data
+        current_color_map = COLOR_MAP
+        filter_info = ""
     
     # Get sample options and add average options
-    sample_options = sorted(data["Sample name"].unique())
-    dropdown_options = ["Control average", "DLS average"] + sample_options
+    sample_options = sorted(display_data["Sample name"].unique())
+    
+    # Create average options based on unique conditions
+    unique_conditions = display_data['Condition'].unique()
+    average_options = [f"{condition} average" for condition in unique_conditions]
+    dropdown_options = average_options + sample_options
     
     # Define callback for dropdown selection
     def on_dropdown_change():
@@ -447,22 +745,35 @@ def visualization_page(data):
     col1, col2 = st.columns(2)
     
     with col1:
-        # Create violin plot
-        violin_fig = create_violin_plot(data)
+        # Create violin plot with filtered data
+        violin_fig = create_violin_plot(display_data, color_map=current_color_map)
+        violin_fig.update_layout(title={"text": f"Violin plot of score values (sorted by effect size){filter_info}", "x": 0.15})
+        
         # Display violin plot with sample highlighted
         event_dict = st.plotly_chart(violin_fig, theme="streamlit", use_container_width=True, on_select="rerun", selection_mode="points")
         
         # Add download buttons for violin plot
         st.markdown("**Export Violin Plot:**")
-        create_download_buttons_row(violin_fig, "violin_plot", "violin")
+        create_download_buttons_row_with_csv(
+            violin_fig, 
+            "violin_plot", 
+            "violin", 
+            display_data, 
+            "violin_plot_data.csv"
+        )
         
         # Extract sample from click event
         try:
             clicked_sample = event_dict['selection']['points'][0]['customdata'][0]
-            # Update session state when plot is clicked
-            if clicked_sample is not None:
+            # Check if the clicked sample exists in the filtered data
+            if clicked_sample is not None and clicked_sample in display_data['Sample name'].values:
                 st.session_state.clicked_sample = clicked_sample
                 st.session_state.last_selection_method = "plot_click"
+            else:
+                # Sample was filtered out, clear the selection
+                st.session_state.clicked_sample = None
+                if clicked_sample is not None:
+                    st.warning(f"Sample '{clicked_sample}' was excluded due to filtering criteria.")
         except (KeyError, IndexError):
             # No click event occurred
             pass
@@ -472,15 +783,36 @@ def visualization_page(data):
         final_sample = st.session_state.clicked_sample
     else:
         final_sample = selected_sample
+    
+    # Validate that the final sample exists in the filtered data (if it's not an average)
+    if (final_sample is not None and 
+        not str(final_sample).endswith(" average") and 
+        final_sample not in display_data['Sample name'].values):
+        final_sample = None
 
     with col2:
-        spider_fig = create_spider_plot(data, selected_sample=final_sample)
+        spider_fig = create_spider_plot(display_data, selected_sample=final_sample, color_map=current_color_map)
         st.plotly_chart(spider_fig, use_container_width=True)
         
         # Add download buttons for spider plot (only if a sample is selected)
         if final_sample:
             st.markdown("**Export Radar Plot:**")
-            create_download_buttons_row(spider_fig, f"radar_plot_{final_sample}", f"radar_{final_sample}")
+            # Prepare data for the specific sample or average
+            if str(final_sample).endswith(" average"):
+                condition_name = str(final_sample).replace(" average", "")
+                radar_data = display_data[display_data['Condition'] == condition_name].copy()
+                csv_filename = f"radar_plot_{condition_name}_average_data.csv"
+            else:
+                radar_data = display_data[display_data['Sample name'] == final_sample].copy()
+                csv_filename = f"radar_plot_sample_{final_sample}_data.csv"
+            
+            create_download_buttons_row_with_csv(
+                spider_fig, 
+                f"radar_plot_{final_sample}", 
+                f"radar_{final_sample}",
+                radar_data,
+                csv_filename
+            )
 
     
 def data_analysis_page(data):
@@ -496,17 +828,33 @@ def data_analysis_page(data):
     # Sample distribution by condition
     st.subheader("Sample Distribution by Condition")
     condition_counts = data.groupby("Sample name")["Condition"].first().value_counts()
+
     condition_fig = px.pie(
         values=condition_counts.values,
         names=condition_counts.index,
-        color_discrete_map=COLOR_MAP,  # Use the consistent color mapping
         title="Distribution of Samples by Condition",
+    )
+    # Manually set the colors to ensure Set2 palette is used
+    condition_fig.update_traces(
+        marker=dict(colors=[COLOR_MAP.get(name, color_discrete_sequence[i]) 
+                        for i, name in enumerate(condition_counts.index)])
     )
     st.plotly_chart(condition_fig)
     
     # Add download buttons for pie chart
     st.markdown("**Export Pie Chart:**")
-    create_download_buttons_row(condition_fig, "sample_distribution_pie", "pie")
+    # Prepare pie chart data
+    pie_data = pd.DataFrame({
+        'Condition': condition_counts.index,
+        'Count': condition_counts.values
+    })
+    create_download_buttons_row_with_csv(
+        condition_fig, 
+        "sample_distribution_pie", 
+        "pie",
+        pie_data,
+        "sample_distribution_data.csv"
+    )
 
     # Show domain summary statistics
     st.subheader("Domain Statistics")
@@ -552,7 +900,7 @@ def data_analysis_page(data):
     st.image(corr_buffer, use_container_width=False)
     
     # Create download buttons for clustered correlation heatmap
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         corr_buffer.seek(0)
@@ -586,6 +934,17 @@ def data_analysis_page(data):
             file_name="clustered_correlation_heatmap.pdf",
             mime="application/pdf",
             key="corr_heatmap_pdf"
+        )
+    
+    with col4:
+        # Download correlation matrix data
+        corr_csv = corr_matrix.to_csv()
+        st.download_button(
+            label="📋 Download CSV",
+            data=corr_csv,
+            file_name="correlation_matrix_data.csv",
+            mime="text/csv",
+            key="corr_heatmap_csv"
         )
     
     plt.close('all')  # Clean up matplotlib figures
@@ -672,7 +1031,7 @@ def clustered_heatmap_page(data):
 
             # Add download buttons for the heatmap
             st.markdown("**Export Clustered Heatmap:**")
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             
             with col1:
                 # PNG download
@@ -709,6 +1068,17 @@ def clustered_heatmap_page(data):
                     file_name="clustered_heatmap.pdf",
                     mime="application/pdf",
                     key="heatmap_pdf"
+                )
+            
+            with col4:
+                # Download heatmap data
+                heatmap_csv = data_matrix.to_csv()
+                st.download_button(
+                    label="📋 Download CSV",
+                    data=heatmap_csv,
+                    file_name="clustered_heatmap_data.csv",
+                    mime="text/csv",
+                    key="heatmap_csv"
                 )
 
         except Exception as e:
