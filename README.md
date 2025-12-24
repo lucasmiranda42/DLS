@@ -1,4 +1,4 @@
-# Official code repository accompanying the paper "Reinventing the wheel: Domain-focused biobehavioral assessment confirms a depression-like syndrome in C57BL/6 mice caused by chronic social defeat"
+# Official code repository accompanying the paper "Toward individualized depression modeling: Clinically-aligned biobehavioral profiling captures susceptibility, severity, and subtype signatures in mice"
 
 ## Getting started
 

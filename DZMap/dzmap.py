@@ -463,7 +463,7 @@ def intro_page():
     st.markdown(
         """
 
-    This tool accompanies the paper **Reinventing the wheel: Domain-focused biobehavioral assessment confirms a depression-like syndrome in C57BL/6 mice caused by chronic social defeat**.\n
+    This tool accompanies the paper **Toward individualized depression modeling: Clinically-aligned biobehavioral profiling captures susceptibility, severity, and subtype signatures in mice**.\n
 
     """
     )
