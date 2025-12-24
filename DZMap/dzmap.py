@@ -29,7 +29,7 @@ COLOR_MAP = {
 }
 
 # Set default file path
-DEFAULT_FILE = "../DLS_data/Results/DLS_domain_scores.csv"
+DEFAULT_FILE = "../sample_data/DLS_domain_scores.csv"
 
 
 def create_download_button(fig, filename, button_text="Download as SVG", key=None):
