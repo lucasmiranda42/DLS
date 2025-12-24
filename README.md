@@ -18,11 +18,11 @@ All code used to reproduce the results in the paper can be found in the `noteboo
 
 Together with the paper, we release the DZMap, a streamlit-based visualization tool that allows researches to both explore our data and to upload their own, to check whether their cohort is compatible with the DLS model. 
 
+DZMap is available under https://dzmap-dashboard.streamlit.app/
+
 To run the DZMap locally, you can use the following command:
 
 ```bash
 streamlit run DZMap/dzmap.py
 ```
-
-COMING SOON: The DZMap can be found at https://dzmap.streamlit.app/.
 
