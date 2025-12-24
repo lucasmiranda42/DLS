@@ -23,11 +23,6 @@ shap = "^0.41.0"
 networkx = "^2.8.7"
 dask-image = "^2022.9.0"
 seglearn = "^1.2.5"
-tensorflow-macos = {version = "2.11.0", platform = "darwin"}
-tensorflow = [
-    {version = "2.11.0", platform = "linux"},
-    {version = "2.11.0", platform = "win64"},
-]
 keras-tcn-macos = {version = "^1.0", platform = "darwin"}
 keras-tcn = [
     {version = "^3.5.0", platform = "linux"},
@@ -52,6 +47,7 @@ h5py = "^3.7.0"
 tables = {version = "3.8.0", markers="platform_machine != 'arm64' or platform_system != 'Darwin'"}
 dash = "^2.12.1"
 dash-bootstrap-components = "^1.5.0"
+streamlit = "^1.52.2"
 
 [tool.poetry.group.dev.dependencies]
 black = "^22.8.0"
