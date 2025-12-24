@@ -257,11 +257,11 @@ def create_spider_plot(data, selected_sample, color_map=None):
     if color_map is None:
         color_map = COLOR_MAP
     
-    # Ensure selected_sample is a string or None
-    if selected_sample is not None and not isinstance(selected_sample, str):
+    # Ensure selected_sample is a string or None/empty
+    if selected_sample is not None and selected_sample != "" and not isinstance(selected_sample, str):
         selected_sample = str(selected_sample)
         
-    if not selected_sample:
+    if not selected_sample or selected_sample == "":
         # Default spider plot when no sample is selected
         default_spider_fig = go.Figure()
         default_spider_fig.update_layout(
@@ -308,7 +308,13 @@ def create_spider_plot(data, selected_sample, color_map=None):
         "Z-score value"
     ].apply(lambda x: (x - x.min()) / (x.max() - x.min()))
 
-    filtered_df = data_radar[data_radar["Sample name"] == int(selected_sample)]
+    # Try to match sample by string or integer
+    try:
+        sample_int = int(selected_sample)
+        filtered_df = data_radar[data_radar["Sample name"] == sample_int]
+    except (ValueError, TypeError):
+        filtered_df = data_radar[data_radar["Sample name"].astype(str) == selected_sample]
+    
     filtered_df = filtered_df.loc[filtered_df.domain != "Total score"]
 
     if len(filtered_df) == 0:
@@ -493,7 +499,7 @@ def data_table_page(data):
     if original_df is not None:
         filtered_df = original_df
         if search_term:
-            mask = original_df["Sample name"].str.contains(search_term, case=False)
+            mask = original_df["Sample name"].astype(str).str.contains(search_term, case=False)
             filtered_df = original_df[mask]
 
         # Add download button
@@ -643,13 +649,13 @@ def visualization_page(data):
             
             new_filter_domain = st.selectbox(
                 "Select Domain",
-                options=[None] + available_domains,
+                options=[""] + available_domains,
                 key="new_filter_domain_select",
-                format_func=lambda x: "Choose domain..." if x is None else x
+                format_func=lambda x: "Choose domain..." if x == "" else x
             )
         
         with col_threshold:
-            if new_filter_domain:
+            if new_filter_domain and new_filter_domain != "":
                 # Get min and max values for the selected domain
                 domain_data = data[data['domain'] == new_filter_domain]
                 min_val = float(domain_data['Z-score value'].min())
@@ -671,7 +677,7 @@ def visualization_page(data):
                 st.info(f"**High** (≥{new_filter_threshold:.1f}): {high_count} | **Low** (<{new_filter_threshold:.1f}): {low_count}")
         
         with col_add:
-            if new_filter_domain is not None:
+            if new_filter_domain and new_filter_domain != "":
                 st.write("")  # Add spacing
                 st.write("")  # Add spacing
                 if st.button("Add Filter", key="add_new_filter_btn"):
@@ -720,8 +726,8 @@ def visualization_page(data):
         current_color_map = COLOR_MAP
         filter_info = ""
     
-    # Get sample options and add average options
-    sample_options = sorted(display_data["Sample name"].unique())
+    # Get sample options and add average options - convert to strings
+    sample_options = [str(s) for s in sorted(display_data["Sample name"].unique())]
     
     # Create average options based on unique conditions
     unique_conditions = display_data['Condition'].unique()
@@ -736,8 +742,8 @@ def visualization_page(data):
     # Dropdown for manual selection
     selected_sample = st.selectbox(
         "Click a sample on the plot on the left, or select manually from the drop-down menu",
-        options=[None] + dropdown_options,
-        format_func=lambda x: "Select a sample" if x is None else x,
+        options=[""] + dropdown_options,
+        format_func=lambda x: "Select a sample" if x == "" else x,
         key="dropdown_selection",
         on_change=on_dropdown_change
     )
@@ -765,9 +771,11 @@ def visualization_page(data):
         # Extract sample from click event
         try:
             clicked_sample = event_dict['selection']['points'][0]['customdata'][0]
+            # Convert to string for consistent comparison
+            clicked_sample_str = str(clicked_sample) if clicked_sample is not None else None
             # Check if the clicked sample exists in the filtered data
-            if clicked_sample is not None and clicked_sample in display_data['Sample name'].values:
-                st.session_state.clicked_sample = clicked_sample
+            if clicked_sample_str is not None and clicked_sample_str in sample_options:
+                st.session_state.clicked_sample = clicked_sample_str
                 st.session_state.last_selection_method = "plot_click"
             else:
                 # Sample was filtered out, clear the selection
@@ -782,12 +790,13 @@ def visualization_page(data):
     if st.session_state.last_selection_method == "plot_click":
         final_sample = st.session_state.clicked_sample
     else:
-        final_sample = selected_sample
+        final_sample = selected_sample if selected_sample and selected_sample != "" else None
     
     # Validate that the final sample exists in the filtered data (if it's not an average)
     if (final_sample is not None and 
+        final_sample != "" and
         not str(final_sample).endswith(" average") and 
-        final_sample not in display_data['Sample name'].values):
+        str(final_sample) not in sample_options):
         final_sample = None
 
     with col2:
@@ -795,7 +804,7 @@ def visualization_page(data):
         st.plotly_chart(spider_fig, use_container_width=True)
         
         # Add download buttons for spider plot (only if a sample is selected)
-        if final_sample:
+        if final_sample and final_sample != "":
             st.markdown("**Export Radar Plot:**")
             # Prepare data for the specific sample or average
             if str(final_sample).endswith(" average"):
@@ -803,7 +812,12 @@ def visualization_page(data):
                 radar_data = display_data[display_data['Condition'] == condition_name].copy()
                 csv_filename = f"radar_plot_{condition_name}_average_data.csv"
             else:
-                radar_data = display_data[display_data['Sample name'] == final_sample].copy()
+                # Try to match by string or integer
+                try:
+                    sample_int = int(final_sample)
+                    radar_data = display_data[display_data['Sample name'] == sample_int].copy()
+                except (ValueError, TypeError):
+                    radar_data = display_data[display_data['Sample name'].astype(str) == final_sample].copy()
                 csv_filename = f"radar_plot_sample_{final_sample}_data.csv"
             
             create_download_buttons_row_with_csv(
