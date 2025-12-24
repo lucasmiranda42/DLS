@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "DLS"
+name = "DZMap"
 version = "0.1.85"
 description = ""
 authors = ["lucas_miranda <lucas_miranda@psych.mpg.de>"]
