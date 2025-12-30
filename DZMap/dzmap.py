@@ -890,6 +890,14 @@ def data_analysis_page(data):
     if "DLS score" in pivot_data.columns:
         pivot_data = pivot_data.drop("DLS score", axis=1)
 
+    # Drop domains with too many missing values (keep domains with at least 50% data)
+    min_samples = len(pivot_data) * 0.5
+    pivot_data = pivot_data.dropna(axis=1, thresh=min_samples)
+    
+    # Drop samples with too many missing values in remaining domains
+    min_domains = len(pivot_data.columns) * 0.5
+    pivot_data = pivot_data.dropna(axis=0, thresh=min_domains)
+
     # Calculate correlation matrix
     corr_matrix = pivot_data.corr()
 
